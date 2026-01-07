@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,212 +16,272 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { CalendarIcon } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { CalendarIcon, Trash2 } from "lucide-react";
 import { format } from "date-fns";
-import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+/* ================= TYPES ================= */
+
+type TransactionType = "income" | "expense";
+
+interface Transaction {
+  _id?: string;
+  category?: string;
+  amount?: number;
+  type?: TransactionType;
+  date?: string;
+  description?: string;
+  paymentMethod?: string;
+}
 
 interface TransactionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mode: "add" | "edit";
+  transaction?: Transaction;
+  onDeleted?: () => void;
 }
+
+/* ================= OPTIONS ================= */
+
+const CATEGORY_OPTIONS: { label: string; type: TransactionType }[] = [
+  { label: "Food", type: "expense" },
+  { label: "Transport", type: "expense" },
+  { label: "Shopping", type: "expense" },
+  { label: "Bills", type: "expense" },
+  { label: "Entertainment", type: "expense" },
+  { label: "Salary", type: "income" },
+  { label: "Freelance", type: "income" },
+  { label: "Bonus", type: "income" },
+];
+
+const PAYMENT_OPTIONS = [
+  "UPI",
+  "Credit Card",
+  "Debit Card",
+  "Cash",
+  "Net Banking",
+];
+
+/* ================= COMPONENT ================= */
 
 export function TransactionModal({
   open,
   onOpenChange,
+  mode,
+  transaction,
+  onDeleted,
 }: TransactionModalProps) {
-  const [date, setDate] = useState<Date>(new Date());
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("");
-  const [description, setDescription] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState<Transaction>({
+    category: "Food",
+    amount: 0,
+    type: "expense",
+    date: new Date().toISOString(),
+    description: "",
+    paymentMethod: "UPI",
+  });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
-    if (!amount || !category) {
-      toast.error("Amount and category are required");
-      return;
+  /* ---------- Prefill on Edit ---------- */
+  useEffect(() => {
+    if (transaction) {
+      const dateObj = transaction.date
+        ? new Date(transaction.date)
+        : new Date();
+
+      setForm({
+        _id: transaction._id,
+        category: transaction.category ?? "Food",
+        amount: typeof transaction.amount === "number" ? transaction.amount : 0,
+        type: transaction.type ?? "expense",
+        date: dateObj.toISOString(),
+        description: transaction.description ?? "",
+        paymentMethod: transaction.paymentMethod ?? "UPI",
+      });
+
+      setSelectedDate(dateObj);
     }
+  }, [transaction, open]);
 
-    const numericAmount = Number(amount);
-    if (isNaN(numericAmount)) {
-      toast.error("Invalid amount");
-      return;
-    }
-
-    const payload = {
-      date: date.toISOString(),
-      category,
-      description,
-      paymentMethod,
-      amount: Math.abs(numericAmount),
-      type: category === "Income" ? "income" : "expense",
-    };
-
+  /* ---------- Save ---------- */
+  const handleSubmit = async () => {
     try {
-      setLoading(true);
+      const url =
+        mode === "add"
+          ? "http://127.0.0.1:8000/add-transaction"
+          : "http://127.0.0.1:8000/update-transaction";
 
-      const res = await fetch(
-        "http://127.0.0.1:8000/add-transaction",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        }
+      const res = await fetch(url, {
+        method: mode === "add" ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) throw new Error();
+
+      toast.success(
+        mode === "add"
+          ? "Transaction added successfully"
+          : "Transaction updated successfully"
       );
 
-      if (!res.ok) {
-        throw new Error("Failed to add transaction");
-      }
-
-      toast.success("Transaction added successfully!");
       onOpenChange(false);
-
-      // Reset form
-      setAmount("");
-      setCategory("");
-      setDescription("");
-      setPaymentMethod("");
-      setDate(new Date());
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to save transaction");
-    } finally {
-      setLoading(false);
     }
   };
+
+  /* ---------- Delete (FIXED) ---------- */
+  const handleDelete = async () => {
+    if (!transaction?._id) return;
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:8000/delete-transaction/${transaction._id}`,
+        { method: "DELETE" }
+      );
+
+      if (!res.ok) throw new Error();
+
+      toast.success("Transaction deleted");
+      onDeleted?.(); // 🔥 refresh list
+      onOpenChange(false);
+    } catch {
+      toast.error("Failed to delete transaction");
+    }
+  };
+
+  /* ================= UI ================= */
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Add New Transaction</DialogTitle>
+          <DialogTitle>
+            {mode === "add" ? "Add Transaction" : "Edit Transaction"}
+          </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-4">
           {/* Date */}
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Date</Label>
             <Popover>
               <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "w-full justify-start text-left font-normal",
-                    !date && "text-muted-foreground"
-                  )}
-                >
+                <Button variant="outline" className="w-full justify-start">
                   <CalendarIcon className="mr-2 h-4 w-4" />
-                  {date ? format(date, "PPP") : "Pick a date"}
+                  {format(selectedDate, "PPP")}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0">
                 <Calendar
                   mode="single"
-                  selected={date}
-                  onSelect={(d) => d && setDate(d)}
-                  initialFocus
+                  selected={selectedDate}
+                  onSelect={(d) => {
+                    if (!d) return;
+                    setSelectedDate(d);
+                    setForm({ ...form, date: d.toISOString() });
+                  }}
                 />
               </PopoverContent>
             </Popover>
           </div>
 
-          {/* Amount */}
-          <div className="space-y-2">
-            <Label>Amount (₹)</Label>
-            <Input
-              type="number"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-            />
-          </div>
-
           {/* Category */}
-          <div className="space-y-2">
+          <div className="space-y-1">
             <Label>Category</Label>
-            <Select value={category} onValueChange={setCategory} required>
+            <Select
+              value={form.category}
+              onValueChange={(value) => {
+                const match = CATEGORY_OPTIONS.find(
+                  (c) => c.label === value
+                );
+                setForm({
+                  ...form,
+                  category: value,
+                  type: match?.type ?? "expense",
+                });
+              }}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Food">Food</SelectItem>
-                <SelectItem value="Transport">Transport</SelectItem>
-                <SelectItem value="Shopping">Shopping</SelectItem>
-                <SelectItem value="Bills">Bills</SelectItem>
-                <SelectItem value="Entertainment">
-                  Entertainment
-                </SelectItem>
-                <SelectItem value="Income">Income</SelectItem>
+                {CATEGORY_OPTIONS.map((c) => (
+                  <SelectItem key={c.label} value={c.label}>
+                    {c.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* Description */}
-          <div className="space-y-2">
-            <Label>Description</Label>
+          {/* Amount */}
+          <div className="space-y-1">
+            <Label>Amount (₹)</Label>
             <Input
-              placeholder="e.g., Grocery shopping"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              type="number"
+              value={form.amount ?? 0}
+              onChange={(e) =>
+                setForm({ ...form, amount: Number(e.target.value) })
+              }
             />
           </div>
 
-          {/* Payment */}
-          <div className="space-y-2">
+          {/* Payment Method */}
+          <div className="space-y-1">
             <Label>Payment Method</Label>
             <Select
-              value={paymentMethod}
-              onValueChange={setPaymentMethod}
+              value={form.paymentMethod}
+              onValueChange={(v) =>
+                setForm({ ...form, paymentMethod: v })
+              }
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select payment method" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="UPI">UPI</SelectItem>
-                <SelectItem value="Credit Card">
-                  Credit Card
-                </SelectItem>
-                <SelectItem value="Debit Card">
-                  Debit Card
-                </SelectItem>
-                <SelectItem value="Cash">Cash</SelectItem>
-                <SelectItem value="Net Banking">
-                  Net Banking
-                </SelectItem>
+                {PAYMENT_OPTIONS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          <DialogFooter>
+          {/* Description */}
+          <div className="space-y-1">
+            <Label>Description</Label>
+            <Input
+              value={form.description ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="flex justify-between mt-4">
+          {mode === "edit" && (
             <Button
+              variant="destructive"
               type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
+              onClick={handleDelete}
             >
-              Cancel
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
             </Button>
-            <Button
-              type="submit"
-              className="bg-gradient-primary"
-              disabled={loading}
-            >
-              {loading ? "Saving..." : "Save Transaction"}
-            </Button>
-          </DialogFooter>
-        </form>
+          )}
+          <Button onClick={handleSubmit}>Save</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
